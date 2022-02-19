@@ -6,11 +6,11 @@ SRCS = $(wildcard $(SRC)/*.c)
 OBJS = $(patsubst $(SRC)/%.c,$(OBJ)/%.o,$(SRCS))
 DEPS = $(OBJS:.o=.d)
 
-CC_COMMON = -std=c11 -march=native -Wall -Wextra -Wpedantic
-CC_DEBUG = -g -DDEBUG -fsanitize=undefined
+CC_COMMON = -std=c11 -march=native -D_DEFAULT_SOURCE
+CC_DEBUG = -g -Wall -Wextra -Wpedantic -DDEBUG -fsanitize=undefined,address
 CC_RELEASE = -O2
 LD_COMMON = 
-LD_DEBUG = -fsanitize=undefined
+LD_DEBUG = -fsanitize=undefined,address
 LD_RELEASE = 
 
 CCFLAGS = $(CC_COMMON) $(CC_DEBUG)
