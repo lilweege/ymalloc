@@ -10,22 +10,45 @@
 #include <stdbool.h>
 #include <unistd.h>
 
-#define HEAP_INIT_SIZE 1024
-#define HEAP_ALIGN sizeof(uintptr_t)
-#define ALIGN_UP(x, align) ((x) + (align-(((x)-1) & (align-1))-1))
+typedef size_t BlockSize; // lsb represent freed status
+typedef struct {
+    BlockSize* prev;
+    BlockSize* next;
+} BlockNode;
+
+#ifdef DEBUG
+    #define HEAP_INIT_SIZE (4096-BLOCK_AUXILIARY_SIZE)
+#else
+    #define HEAP_INIT_SIZE 1024
+#endif
 #define SBRK_OK(p) ((p) != (void*) -1)
 
+// set
+#define BLOCKSIZE_FREE(x)    ((x) | 1)
+#define BLOCKSIZE_ALLOC(x)   ((x) & ~1)
+// get
+#define BLOCKSIZE_IS_FREE(x) ((x) & 1)
+#define BLOCKSIZE_BYTES(x)   ((x) & ~1)
 
-static_assert(HEAP_ALIGN == 8,
-    "sizeof ptr must be 8 bytes!");
+#define BUGGY_MAX_(a, b) ((a) > (b) ? (a) : (b))
+#define HEAP_ALIGNMENT (sizeof(uintptr_t))
+#define BLOCK_HEADER_SIZE sizeof(BlockSize)
+#define BLOCK_AUXILIARY_SIZE (BLOCK_HEADER_SIZE*2)
+#define PAYLOAD_MIN_SIZE (sizeof(BlockNode))
+#define BLOCK_MIN_SIZE (BLOCK_AUXILIARY_SIZE + PAYLOAD_MIN_SIZE)
 
-typedef struct Block Block;
-struct Block {
-    Block *prev, *next;
-    intptr_t size;
-};
+#define HEAP_ALIGN_UP(sz) (((sz) + (HEAP_ALIGNMENT-1)) & ~(HEAP_ALIGNMENT-1))
+#define PAYLOAD_ALIGN(sz) HEAP_ALIGN_UP(BUGGY_MAX_(sz, PAYLOAD_MIN_SIZE))
+// block size must be at least the size of a BlockNode (two pointers)
+// the header and footer BlockSize implicit list nodes are not included in the block
 
-bool HeapInit();
-bool HeapGrow();
+// on a 64 bit machine, each block should have the following layout
+// |   header (8)   |   payload (8*k + 16)   |   footer (8)   |
+// freed nodes reuse the payload space to store pointers, so it must be >= 16 bytes
+// therefore each successful allocation will reserve at least 32 bytes on the heap
+
+void InitBlock(void* ptr, size_t size);
+void* HeapInit(void);
+size_t HeapGrow(size_t size);
 
 #endif // HEAP_H
