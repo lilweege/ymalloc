@@ -2,15 +2,14 @@
 
 static void* heapBase = NULL;
 
-void InitBlock(void* ptr, size_t size) {
+BlockNode* InitBlock(void* ptr, size_t size, BlockUsage usage) {
     BlockSize* header = (BlockSize*) (((uint8_t*) ptr));
     BlockSize* footer = (BlockSize*) (((uint8_t*) ptr) + BLOCK_HEADER_SIZE + size);
-    BlockSize blockSize = BLOCKSIZE_FREE(size);
+    BlockSize blockSize = usage == BLOCK_USED ? BLOCKSIZE_ALLOC(size) : BLOCKSIZE_FREE(size);
     *header = blockSize;
     *footer = blockSize;
     BlockNode* payload = (BlockNode*) (((uint8_t*) ptr) + BLOCK_HEADER_SIZE);
-    payload->next = NULL;
-    payload->prev = NULL;
+    return payload;
 }
 
 void* HeapInit(void) {
@@ -29,12 +28,15 @@ void* HeapInit(void) {
     return heapBase = base;
 }
 
-size_t HeapGrow(size_t size) {
+// grows the heap and creates a free block
+BlockSize* HeapGrow(size_t size) {
     size_t payloadSize = PAYLOAD_ALIGN(size);
     size_t blockSize = payloadSize + BLOCK_AUXILIARY_SIZE;
     void* blockPtr = sbrk(blockSize);
     if (!SBRK_OK(blockPtr))
-        return 0;
-    InitBlock(blockPtr, payloadSize);
-    return blockSize;
+        return NULL;
+    BlockNode* node = InitBlock(blockPtr, payloadSize, BLOCK_FREE);
+    node->next = NULL;
+    node->prev = NULL;
+    return blockPtr;
 }

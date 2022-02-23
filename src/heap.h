@@ -11,10 +11,11 @@
 #include <unistd.h>
 
 typedef size_t BlockSize; // lsb represent freed status
-typedef struct {
-    BlockSize* prev;
-    BlockSize* next;
-} BlockNode;
+typedef struct BlockNode BlockNode;
+struct BlockNode {
+    BlockNode* prev;
+    BlockNode* next;
+};
 
 #ifdef DEBUG
     #define HEAP_INIT_SIZE (4096-BLOCK_AUXILIARY_SIZE)
@@ -23,16 +24,21 @@ typedef struct {
 #endif
 #define SBRK_OK(p) ((p) != (void*) -1)
 
+typedef enum {
+    BLOCK_USED,
+    BLOCK_FREE,
+} BlockUsage;
+
 // set
 #define BLOCKSIZE_FREE(x)    ((x) | 1)
 #define BLOCKSIZE_ALLOC(x)   ((x) & ~1)
 // get
-#define BLOCKSIZE_IS_FREE(x) ((x) & 1)
+#define BLOCKSIZE_USAGE(x)   ((x) & 1)
 #define BLOCKSIZE_BYTES(x)   ((x) & ~1)
 
 #define BUGGY_MAX_(a, b) ((a) > (b) ? (a) : (b))
 #define HEAP_ALIGNMENT (sizeof(uintptr_t))
-#define BLOCK_HEADER_SIZE sizeof(BlockSize)
+#define BLOCK_HEADER_SIZE (sizeof(BlockSize))
 #define BLOCK_AUXILIARY_SIZE (BLOCK_HEADER_SIZE*2)
 #define PAYLOAD_MIN_SIZE (sizeof(BlockNode))
 #define BLOCK_MIN_SIZE (BLOCK_AUXILIARY_SIZE + PAYLOAD_MIN_SIZE)
@@ -47,8 +53,8 @@ typedef struct {
 // freed nodes reuse the payload space to store pointers, so it must be >= 16 bytes
 // therefore each successful allocation will reserve at least 32 bytes on the heap
 
-void InitBlock(void* ptr, size_t size);
+BlockNode* InitBlock(void* ptr, size_t size, BlockUsage use);
 void* HeapInit(void);
-size_t HeapGrow(size_t size);
+BlockSize* HeapGrow(size_t size);
 
 #endif // HEAP_H
