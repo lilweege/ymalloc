@@ -1,6 +1,10 @@
 #include "heap.h"
 
 static void* heapBase = NULL;
+static size_t heapSize = 0;
+
+void* HeapBegin(void) { return heapBase; }
+void* HeapEnd(void) { return ((uint8_t*) heapBase) + heapSize; }
 
 BlockNode* InitBlock(void* ptr, size_t size, BlockUsage usage) {
     BlockSize* header = (BlockSize*) (((uint8_t*) ptr));
@@ -30,11 +34,17 @@ void* HeapInit(void) {
 
 // grows the heap and creates a free block
 BlockSize* HeapGrow(size_t size) {
+    // try to grow the heap
     size_t payloadSize = PAYLOAD_ALIGN(size);
     size_t blockSize = payloadSize + BLOCK_AUXILIARY_SIZE;
     void* blockPtr = sbrk(blockSize);
     if (!SBRK_OK(blockPtr))
         return NULL;
+    
+    // heap grow success
+    heapSize += blockSize;
+
+    // create a free block in the new space
     BlockNode* node = InitBlock(blockPtr, payloadSize, BLOCK_FREE);
     node->next = NULL;
     node->prev = NULL;

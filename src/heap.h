@@ -15,6 +15,8 @@ typedef struct BlockNode BlockNode;
 struct BlockNode {
     BlockNode* prev;
     BlockNode* next;
+    // these will be repurposed as left and right children in a tree
+    // a doubly linked list is not entirely useful
 };
 
 #ifdef DEBUG
@@ -25,8 +27,8 @@ struct BlockNode {
 #define SBRK_OK(p) ((p) != (void*) -1)
 
 typedef enum {
-    BLOCK_USED,
-    BLOCK_FREE,
+    BLOCK_USED = 0,
+    BLOCK_FREE = 1,
 } BlockUsage;
 
 // set
@@ -53,6 +55,8 @@ typedef enum {
 // freed nodes reuse the payload space to store pointers, so it must be >= 16 bytes
 // therefore each successful allocation will reserve at least 32 bytes on the heap
 
+void* HeapBegin(void);
+void* HeapEnd(void);
 BlockNode* InitBlock(void* ptr, size_t size, BlockUsage use);
 void* HeapInit(void);
 BlockSize* HeapGrow(size_t size);
