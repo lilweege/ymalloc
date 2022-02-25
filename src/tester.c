@@ -11,6 +11,12 @@ int main() {
     memset(x, 'A', 30);
     memset(y, 'B', 1);
     memset(z, 'C', 100);
+    yrealloc(NULL, 0);
+    
+    printf("alloc ye\n");
+    void* ye = ymalloc(5000);
+    memset(ye, 'X', 5000);
+    yrealloc(NULL, 0);
 
     yrealloc(NULL, 0);
     printf("free y\n");
@@ -25,9 +31,21 @@ int main() {
     memset(w, 'D', 20);
     yrealloc(NULL, 0);
 
+    printf("alloc big\n");
+    void* big = ymalloc(20000);
+    memset(big, 'X', 20000);
+    yrealloc(NULL, 0);
+
+    printf("free big\n");
+    yfree(big);
+    yrealloc(NULL, 0);
+
+
     printf("free z\n");
     yfree(z);
     yrealloc(NULL, 0);
+    
+
     printf("free w\n");
     yfree(w);
     yrealloc(NULL, 0);

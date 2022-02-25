@@ -4,14 +4,9 @@ static BlockSize* freeListHead = NULL;
 
 #include <stdio.h>
 static void DumpHeap(FILE* stream) {
-    size_t i = 0;
     fprintf(stream, "====== DUMPING HEAP ======\n");
     BlockNode* curr = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
     while (curr) {
-        if (++i > 10) {
-            fprintf(stream, "INFINITE LOOP, BREAKING\n");
-            break;
-        }
         BlockSize* header = (BlockSize*) (((uint8_t*) curr) - BLOCK_HEADER_SIZE);
         size_t blockSize = BLOCKSIZE_BYTES(*header);
         size_t blockSizeFoot = BLOCKSIZE_BYTES(*(BlockSize*) (((uint8_t*) curr) + blockSize));
@@ -27,41 +22,31 @@ static void DumpHeap(FILE* stream) {
     fprintf(stream, "====== DONE DUMPING ======\n");
 }
 
-static BlockSize* SplitBlock(BlockSize* block, size_t size) {
+static void SplitBlock(BlockSize* block, size_t size) {
     // | header (8) | next (8), prev (8)                                            | footer (8) |
     //   ^ block (in free list) points here
     // | header (8) | payload (size) | footer (8) | header (8) | next (8), prev (8) | footer (8) |
-    //   ^ return this block                        ^ add this block to free list
-    printf("block = %p\n", (void*) block);
+    //                                              ^ add this block to free list
     BlockNode* oldNode = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
     BlockNode* prev = oldNode->prev;
     BlockNode* next = oldNode->next;
     size_t oldSize = BLOCKSIZE_BYTES(*block);
-    size_t newSize = oldSize-size-BLOCK_AUXILIARY_SIZE;
-
-    // initialize used block
-    // InitBlock(block, size, BLOCK_USED);
+    size_t newSize = oldSize - size - BLOCK_AUXILIARY_SIZE;
 
     // initialize free block
     BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + size);
     BlockNode* newNode = InitBlock(shrunk, newSize, BLOCK_FREE);
-    printf("shrunk = %p\n", (void*) shrunk);
     // reassign pointers to block
     if (prev)
         prev->next = newNode;
-    else {
-        assert(freeListHead == block);
+    else
         freeListHead = shrunk;
-    }
     if (next)
         next->prev = newNode;
     
     // assign shrunk block pointers
     newNode->prev = prev;
     newNode->next = next;
-
-    // DumpHeap(stderr);
-    return block;
 }
 
 // finds the "best fit" for a block with payload size "size"
@@ -109,6 +94,10 @@ static BlockSize* BestFit(size_t size) {
         // next blocksize
         curr = curr->next;
     }
+
+    // couldn't find a block (will have to grow heap)
+    if (!bestBlock)
+        return NULL;
 
     // split the block, rejoin the list, and return the newly created block
     SplitBlock(bestBlock, size);
@@ -184,8 +173,13 @@ void* ymalloc(size_t size) {
     // find an appropriate block
     BlockSize* block = BestFit(size);
     if (!block) {
-        // TODO: grow the heap and coalesce
-        return NULL;
+        block = HeapGrow(size);
+        BlockSize* coalesced = CoalesceBlocks(block);
+        // if the newly grown block coalesced with above, split it
+        if (block != coalesced) {
+            block = coalesced;
+            SplitBlock(block, size);
+        }
     }
     
     // initialize block and return payload
@@ -207,8 +201,6 @@ void yfree(void* ptr) {
     // nothing to free
     if (ptr == NULL)
         return;
-    
-    // DumpHeap(stderr);
 
     // coalesce adjacent blocks
     // this does not set the block pointers
