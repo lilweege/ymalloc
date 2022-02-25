@@ -71,8 +71,6 @@ static BlockSize* BestFit(size_t size) {
     if (!freeListHead)
         freeListHead = HeapInit();
     
-    printf("BEST FIT WITH SIZE %zu\n", size);
-    
     BlockSize* bestBlock = NULL;
     size_t leastWaste = SIZE_MAX;
 
@@ -83,8 +81,8 @@ static BlockSize* BestFit(size_t size) {
 
         // can use entire block if possible
         if (blockSize == size) {
-            printf("BLOCK EXACT MATCH\n");
-
+            // no need to split
+            // remove entire block from free list and return it
             BlockNode* node = (BlockNode*) (((uint8_t*) header) + BLOCK_HEADER_SIZE);
             BlockNode* prev = node->prev;
             BlockNode* next = node->next;
@@ -112,6 +110,7 @@ static BlockSize* BestFit(size_t size) {
         curr = curr->next;
     }
 
+    // split the block, rejoin the list, and return the newly created block
     SplitBlock(bestBlock, size);
     return bestBlock;
 }
@@ -126,37 +125,49 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
     BlockSize* aboveFooter = (BlockSize*) (((uint8_t*) block) - BLOCK_HEADER_SIZE);
     BlockSize* belowHeader = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + blockSize);
 
-    // merge block with blocks above and below if free
+    // merge block with above and below blocks if they are free
     if (((void*) aboveFooter > HeapBegin()) &&
             BLOCKSIZE_USAGE(*aboveFooter) == BLOCK_FREE) {
-        // size_t aboveSize = BLOCKSIZE_BYTES(*aboveFooter);
-        // BlockNode* aboveNode = (BlockNode*) (((uint8_t*) aboveFooter) - aboveSize);
-        // BlockNode* prev = aboveNode->prev;
-        // BlockNode* next = aboveNode->next;
-        // newBlock = (BlockSize*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE);
-        // if (prev)
-        //     prev->next = next;
-        // else
-        //     freeListHead = newBlock;
-        // if (next)
-        //     next->prev = prev;
-        
-        // blockSize += aboveSize + BLOCK_AUXILIARY_SIZE;
+        printf("MERGING ABOVE\n");
+        size_t aboveSize = BLOCKSIZE_BYTES(*aboveFooter);
+        BlockNode* aboveNode = (BlockNode*) (((uint8_t*) aboveFooter) - aboveSize);
+        BlockNode* prev = aboveNode->prev;
+        BlockNode* next = aboveNode->next;
+
+        // join blocks
+        printf("MERGING ABOVE %p WITH %p\n", (void*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE), (void*) block);
+        newBlock = (BlockSize*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE);
+        blockSize += aboveSize + BLOCK_AUXILIARY_SIZE;
+
+        // remove aboveNode from list
+        if (prev)
+            prev->next = next;
+        else {
+            assert(freeListHead == newBlock);
+            freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+        }
+        if (next)
+            next->prev = prev;
     }
     if (((void*) belowHeader < HeapEnd()) &&
             BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE) {
-        // size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
-        // BlockNode* belowNode = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
-        // BlockNode* prev = belowNode->prev;
-        // BlockNode* next = belowNode->next;
-        // if (prev)
-        //     prev->next = next;
-        // else
-        //     freeListHead = newBlock;
-        // if (next)
-        //     next->prev = prev;
-        
-        // blockSize += belowSize + BLOCK_AUXILIARY_SIZE;
+        printf("MERGING BELOW\n");
+        size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
+        BlockNode* belowNode = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
+        BlockNode* prev = belowNode->prev;
+        BlockNode* next = belowNode->next;
+
+        // join blocks
+        blockSize += belowSize + BLOCK_AUXILIARY_SIZE;
+
+        if (prev)
+            prev->next = next;
+        else {
+            assert(freeListHead == (BlockSize*) (((uint8_t*) belowNode) - BLOCK_HEADER_SIZE));
+            freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+        }
+        if (next)
+            next->prev = prev;
     }
 
     InitBlock(newBlock, blockSize, BLOCK_FREE);
@@ -169,6 +180,7 @@ void* ymalloc(size_t size) {
         return NULL;
     size = PAYLOAD_ALIGN(size);
     
+    printf("ALIGNED SIZE = %zu\n", size);
     // find an appropriate block
     BlockSize* block = BestFit(size);
     if (!block) {
@@ -206,8 +218,10 @@ void yfree(void* ptr) {
     // set the block pointers (insert at front of the free list)
     BlockNode* node = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
     node->next = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
-    assert(node->next->prev == NULL);
-    node->next->prev = node;
+    if (node->next) {
+        assert(node->next->prev == NULL);
+        node->next->prev = node;
+    }
     node->prev = NULL;
     freeListHead = block;
 }
