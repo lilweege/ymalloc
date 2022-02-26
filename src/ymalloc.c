@@ -1,28 +1,36 @@
 #include "ymalloc.h"
+#include <string.h>
 
+static bool didInitHeap = false;
 static BlockSize* freeListHead = NULL;
 
 #include <stdio.h>
-static void DumpHeap(FILE* stream) {
-    fprintf(stream, "====== DUMPING HEAP ======\n");
-    BlockNode* curr = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
-    while (curr) {
-        BlockSize* header = (BlockSize*) (((uint8_t*) curr) - BLOCK_HEADER_SIZE);
-        size_t blockSize = BLOCKSIZE_BYTES(*header);
-        size_t blockSizeFoot = BLOCKSIZE_BYTES(*(BlockSize*) (((uint8_t*) curr) + blockSize));
-        BlockUsage freed = BLOCKSIZE_USAGE(*header);
-        fprintf(stream, "%p: { freed=%d, ", (void*)header, freed);
-        if (freed == BLOCK_FREE) {
-            fprintf(stream, "( next = %p, prev = %p ), ",
-                    (void*)(curr->next), (void*)(curr->prev));
+void DumpFreeList(void) {
+    fprintf(stderr, "====== DUMPING HEAP ======\n");
+    if (freeListHead) {
+        BlockNode* curr = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
+        while (curr) {
+            BlockSize* header = (BlockSize*) (((uint8_t*) curr) - BLOCK_HEADER_SIZE);
+            size_t blockSize = BLOCKSIZE_BYTES(*header);
+            size_t blockSizeFoot = BLOCKSIZE_BYTES(*(BlockSize*) (((uint8_t*) curr) + blockSize));
+            BlockUsage freed = BLOCKSIZE_USAGE(*header);
+            fprintf(stderr, "%p: { freed=%d, ", (void*)header, freed);
+            if (freed == BLOCK_FREE) {
+                fprintf(stderr, "( next = %p, prev = %p ), ",
+                        (void*)(curr->next), (void*)(curr->prev));
+            }
+            fprintf(stderr, "head=%zu, foot=%zu }\n", blockSize, blockSizeFoot);
+            curr = curr->next;
         }
-        fprintf(stream, "head=%zu, foot=%zu }\n", blockSize, blockSizeFoot);
-        curr = curr->next;
     }
-    fprintf(stream, "====== DONE DUMPING ======\n");
+    fprintf(stderr, "====== DONE DUMPING ======\n");
 }
 
-static void SplitBlock(BlockSize* block, size_t size) {
+// splits a free block and repairs the remaining block links
+// returns the newly shrunk free block
+// NOTE: assumes block is big enough to accomodate the smallest new block
+// NOTE: does not initialize the newly split block header/footer
+static BlockSize* SplitBlock(BlockSize* block, size_t size) {
     // | header (8) | next (8), prev (8)                                            | footer (8) |
     //   ^ block (in free list) points here
     // | header (8) | payload (size) | footer (8) | header (8) | next (8), prev (8) | footer (8) |
@@ -31,30 +39,39 @@ static void SplitBlock(BlockSize* block, size_t size) {
     BlockNode* prev = oldNode->prev;
     BlockNode* next = oldNode->next;
     size_t oldSize = BLOCKSIZE_BYTES(*block);
+    assert(size + BLOCK_MIN_SIZE <= oldSize);
     size_t newSize = oldSize - size - BLOCK_AUXILIARY_SIZE;
 
     // initialize free block
     BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + size);
     BlockNode* newNode = InitBlock(shrunk, newSize, BLOCK_FREE);
-    // reassign pointers to block
-    if (prev)
-        prev->next = newNode;
-    else
-        freeListHead = shrunk;
-    if (next)
-        next->prev = newNode;
+
+    if (BLOCKSIZE_USAGE(*block) == BLOCK_FREE) {
+        // reassign pointers to block
+        if (prev)
+            prev->next = newNode;
+        else {
+            if (freeListHead != block) {
+                printf("FREE HEAD = %p\n", (void*) freeListHead);
+            }
+            // assert(freeListHead == block);
+            freeListHead = shrunk;
+        }
+        if (next)
+            next->prev = newNode;
+    }
     
     // assign shrunk block pointers
     newNode->prev = prev;
     newNode->next = next;
+    return shrunk;
 }
 
 // finds the "best fit" for a block with payload size "size"
 // without foresight, minimize fragmentation by choosing the closest fit
 static BlockSize* BestFit(size_t size) {
-    // init heap if not already
     if (!freeListHead)
-        freeListHead = HeapInit();
+        return NULL;
     
     BlockSize* bestBlock = NULL;
     size_t leastWaste = SIZE_MAX;
@@ -75,7 +92,10 @@ static BlockSize* BestFit(size_t size) {
                 prev->next = next;
             else {
                 assert(freeListHead == header);
-                freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+                if (next)
+                    freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+                else
+                    freeListHead = NULL;
             }
             if (next)
                 next->prev = prev;
@@ -105,12 +125,12 @@ static BlockSize* BestFit(size_t size) {
 }
 
 
+// try to join a newly freed block with any adjacent free block
+// NOTE: this step happens before the block is added to the free list
+// NOTE: this does not set the block pointers
 static BlockSize* CoalesceBlocks(BlockSize* block) {
-    // try to join a newly freed block with any adjacent free block
-    // NOTE: this step happens before the block is added to the free list
     size_t blockSize = BLOCKSIZE_BYTES(*block);
 
-    BlockSize* newBlock = block;
     BlockSize* aboveFooter = (BlockSize*) (((uint8_t*) block) - BLOCK_HEADER_SIZE);
     BlockSize* belowHeader = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + blockSize);
 
@@ -125,15 +145,18 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
 
         // join blocks
         printf("MERGING ABOVE %p WITH %p\n", (void*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE), (void*) block);
-        newBlock = (BlockSize*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE);
+        block = (BlockSize*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE);
         blockSize += aboveSize + BLOCK_AUXILIARY_SIZE;
 
         // remove aboveNode from list
         if (prev)
             prev->next = next;
         else {
-            assert(freeListHead == newBlock);
-            freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+            assert(freeListHead == block);
+            if (next)
+                freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+            else
+                freeListHead = NULL;
         }
         if (next)
             next->prev = prev;
@@ -153,14 +176,38 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
             prev->next = next;
         else {
             assert(freeListHead == (BlockSize*) (((uint8_t*) belowNode) - BLOCK_HEADER_SIZE));
-            freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+            if (next)
+                freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+            else
+                freeListHead = NULL;
         }
         if (next)
             next->prev = prev;
     }
 
-    InitBlock(newBlock, blockSize, BLOCK_FREE);
-    return newBlock;
+    printf("BLOCK SIZE = %zu\n", blockSize);
+    printf("block = %p\n", (void*) block);
+    InitBlock(block, blockSize, BLOCK_FREE);
+    return block;
+}
+
+static void PrependFreeBlock(BlockSize* block) {
+    // set the block pointers (insert at front of the free list)
+    BlockNode* node = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
+    if (freeListHead) {
+        node->next = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
+        if (node->next) {
+            printf("node->next = %p\n", (void*) node->next);
+            printf("node->next->prev = %p\n", (void*) node->next->prev);
+            assert(node->next->prev == NULL);
+            node->next->prev = node;
+        }
+    }
+    else {
+        node->next = NULL;
+    }
+    node->prev = NULL;
+    freeListHead = block;
 }
 
 void* ymalloc(size_t size) {
@@ -169,15 +216,25 @@ void* ymalloc(size_t size) {
         return NULL;
     size = PAYLOAD_ALIGN(size);
     
+    if (!didInitHeap) {
+        freeListHead = HeapInit();
+        didInitHeap = true;
+    }
+    
     printf("ALIGNED SIZE = %zu\n", size);
     // find an appropriate block
     BlockSize* block = BestFit(size);
     if (!block) {
+        printf("GROWING HEAP!\n");
         block = HeapGrow(size);
+        // printf("freeListHead = %p\n", (void*)freeListHead);
         BlockSize* coalesced = CoalesceBlocks(block);
+        // printf("freeListHead = %p\n", (void*)freeListHead);
+
         // if the newly grown block coalesced with above, split it
         if (block != coalesced) {
             block = coalesced;
+            printf("block = %p\n", (void*)block);
             SplitBlock(block, size);
         }
     }
@@ -187,33 +244,59 @@ void* ymalloc(size_t size) {
     return payload;
 }
 
-void* yrealloc(void* ptr, size_t size) {
-    DumpHeap(stderr);
-    // realloc nothing, simply malloc
-    if (ptr == NULL)
-        return ymalloc(size);
-
-    // TODO ...
-    return NULL;
-}
-
 void yfree(void* ptr) {
     // nothing to free
     if (ptr == NULL)
         return;
 
     // coalesce adjacent blocks
-    // this does not set the block pointers
     BlockSize* block = (BlockSize*) (((uint8_t*) ptr) - BLOCK_HEADER_SIZE);
     block = CoalesceBlocks(block);
+    PrependFreeBlock(block);
+}
 
-    // set the block pointers (insert at front of the free list)
-    BlockNode* node = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
-    node->next = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
-    if (node->next) {
-        assert(node->next->prev == NULL);
-        node->next->prev = node;
+void* ycalloc(size_t nmemb, size_t size) {
+    // NOTE: nmemb * size can overflow!
+    size_t totSize = nmemb * size;
+    void* ptr = ymalloc(totSize);
+    if (ptr)
+        memset(ptr, 0, totSize);
+    return ptr;
+}
+
+void* yrealloc(void* ptr, size_t size) {
+    // realloc nothing, simply malloc
+    if (ptr == NULL)
+        return ymalloc(size);
+    
+    // get the old and new sizes
+    BlockSize* block = (BlockSize*) (((uint8_t*) ptr) - BLOCK_HEADER_SIZE);
+    size_t oldSize = BLOCKSIZE_BYTES(*block);
+    size = PAYLOAD_ALIGN(size);
+    printf("OLD SIZE = %zu\n", oldSize);
+    printf("ALIGNED SIZE = %zu\n", size);
+
+    // same size, do nothing
+    if (size + BLOCK_MIN_SIZE > oldSize && size <= oldSize)
+        return ptr;
+    
+    // lower size, shrink block
+    if (size < oldSize) {
+        printf("SHRINKING BLOCK\n");
+        BlockSize* removed = SplitBlock(block, size);
+        InitBlock(block, size, BLOCK_USED);
+        PrependFreeBlock(CoalesceBlocks(removed));
+        return ptr;
     }
-    node->prev = NULL;
-    freeListHead = block;
+    
+    // grow block or reallocate
+    BlockSize* belowHeader = (BlockSize*) (((uint8_t*) ptr) + oldSize + BLOCK_HEADER_SIZE);
+    // printf("belowHeader = %zu\n", *belowHeader);
+
+    // TODO
+    // BLOCKSIZE_USAGE(*block);
+    // try to find free space immediately after block
+    // if found, no need to reallocate
+
+    return NULL;
 }
