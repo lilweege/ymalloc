@@ -39,12 +39,14 @@ static BlockSize* SplitBlock(BlockSize* block, size_t size) {
     BlockNode* prev = oldNode->prev;
     BlockNode* next = oldNode->next;
     size_t oldSize = BLOCKSIZE_BYTES(*block);
-    assert(size + BLOCK_MIN_SIZE <= oldSize);
-    size_t newSize = oldSize - size - BLOCK_AUXILIARY_SIZE;
+    // assert(size + BLOCK_MIN_SIZE <= oldSize);
+    assert(size + BLOCK_MIN_SIZE <= oldSize + BLOCK_AUXILIARY_SIZE); // realloc
+    size_t newSize = oldSize - size;
 
     // initialize free block
-    BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + size);
+    BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + size);
     BlockNode* newNode = InitBlock(shrunk, newSize, BLOCK_FREE);
+    // BROKEN FOR REALLOC
 
     if (BLOCKSIZE_USAGE(*block) == BLOCK_FREE) {
         // reassign pointers to block
@@ -120,7 +122,7 @@ static BlockSize* BestFit(size_t size) {
         return NULL;
 
     // split the block, rejoin the list, and return the newly created block
-    SplitBlock(bestBlock, size);
+    SplitBlock(bestBlock, size + BLOCK_AUXILIARY_SIZE);
     return bestBlock;
 }
 
@@ -217,8 +219,8 @@ void* ymalloc(size_t size) {
     size = PAYLOAD_ALIGN(size);
     
     if (!didInitHeap) {
-        freeListHead = HeapInit();
         didInitHeap = true;
+        freeListHead = HeapInit();
     }
     
     printf("ALIGNED SIZE = %zu\n", size);
@@ -235,7 +237,7 @@ void* ymalloc(size_t size) {
         if (block != coalesced) {
             block = coalesced;
             printf("block = %p\n", (void*)block);
-            SplitBlock(block, size);
+            SplitBlock(block, size + BLOCK_AUXILIARY_SIZE);
         }
     }
     
@@ -251,8 +253,7 @@ void yfree(void* ptr) {
 
     // coalesce adjacent blocks
     BlockSize* block = (BlockSize*) (((uint8_t*) ptr) - BLOCK_HEADER_SIZE);
-    block = CoalesceBlocks(block);
-    PrependFreeBlock(block);
+    PrependFreeBlock(CoalesceBlocks(block));
 }
 
 void* ycalloc(size_t nmemb, size_t size) {
@@ -283,20 +284,67 @@ void* yrealloc(void* ptr, size_t size) {
     // lower size, shrink block
     if (size < oldSize) {
         printf("SHRINKING BLOCK\n");
-        BlockSize* removed = SplitBlock(block, size);
+        BlockSize* removed = SplitBlock(block, size + BLOCK_AUXILIARY_SIZE);
         InitBlock(block, size, BLOCK_USED);
         PrependFreeBlock(CoalesceBlocks(removed));
         return ptr;
     }
     
-    // grow block or reallocate
+    // below here size > oldSize
     BlockSize* belowHeader = (BlockSize*) (((uint8_t*) ptr) + oldSize + BLOCK_HEADER_SIZE);
-    // printf("belowHeader = %zu\n", *belowHeader);
+    
+    // check if it is possible to grow without reallocating
+    // check if block immediately below is free and big enough
+    if (((void*) belowHeader < HeapEnd()) &&
+            BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE) {
+        size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
+        printf("REALLOC BELOW FREE\n");
+
+        // is merged size big enough
+        size_t exactSize = oldSize + belowSize + BLOCK_AUXILIARY_SIZE;
+        printf("size = %zu\n", size);
+        printf("exactSize = %zu\n", exactSize);
+        if (size == exactSize) {
+            // remove from free list (no need to split)
+            printf("REALLOC EXACT SIZE!\n");
+            BlockNode* node = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
+            BlockNode* prev = node->prev;
+            BlockNode* next = node->next;
+            if (prev)
+                prev->next = next;
+            else {
+                // assert(0);
+                if (next)
+                    freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+                else
+                    freeListHead = NULL;
+            }
+            if (next)
+                next->prev = prev;
+
+            InitBlock(block, size, BLOCK_USED);
+            return ptr;
+        }
+        if (size + BLOCK_MIN_SIZE < exactSize) {
+            // remove from free list (split)
+            printf("SPLITTING size = %zu\n", size);
+            printf("SPLITTING oldSize = %zu\n", oldSize);
+            size_t splitSize = size - oldSize - BLOCK_HEADER_SIZE;
+            printf("SPLITTING splitSize = %zu\n", splitSize);
+            if (size < oldSize + BLOCK_HEADER_SIZE) {
+                assert(0);
+            }
+
+            SplitBlock(belowHeader, splitSize);
+            InitBlock(block, size, BLOCK_USED);
+            return ptr;
+        }
+    }
+
+    // need to reallocate and move
 
     // TODO
-    // BLOCKSIZE_USAGE(*block);
-    // try to find free space immediately after block
-    // if found, no need to reallocate
+    // coalesce and move
 
     return NULL;
 }

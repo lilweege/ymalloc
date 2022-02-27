@@ -1,6 +1,7 @@
 #include "ymalloc.h"
 
 #include <stdio.h>
+#include <string.h>
 
 void MallocFreeTest1() {
     void* x = ymalloc(20);
@@ -144,7 +145,76 @@ void MallocFreeTest5() {
 }
 
 void ReallocTest1() {
-    
+    void* go = ymalloc(50);
+    void* stop = ymalloc(1);
+    yfree(go);
+    DumpFreeList();
+    // FF s FFFFFFFFF
+
+    void* x = ymalloc(100);
+    DumpFreeList();
+    // FF s xxx FFFFFF
+
+    assert(x == yrealloc(x, 90)); // no shrink
+    assert(x == yrealloc(x, 80)); // no shrink
+    assert(x == yrealloc(x, 70)); // shrink
+    DumpFreeList();
+    // FF s xx FFFFFFF
+
+    yfree(stop);
+    DumpFreeList();
+    // FFF xx FFFFFFF
+
+    // printf("realloc 200\n");
+    // x = yrealloc(x, 200);
+}
+
+void ReallocTest2() {
+    void* x = ymalloc(16);
+    void* a = ymalloc(32); memset(a, 'A', 32);
+    void* b = ymalloc(16);
+    void* c = ymalloc(16);
+    // switch order of these frees to test splice
+    yfree(b);
+    yfree(x);
+    DumpFreeList();
+    // F aa F c FFFFFF
+
+    assert(a == yrealloc(a, 64));
+    DumpFreeList();
+    // F aaaa c FFFFFF
+
+    for (int i = 0; i < 32; ++i)
+        assert(((char*)a)[i] == 'A');
+    assert(*(size_t*)(((char*)a) - 8) == 64);
+    assert(*(size_t*)(((char*)a) + 64) == 64);
+
+    yfree(a);
+    yfree(c);
+}
+
+void ReallocTest3() {
+    void* x = ymalloc(16);
+    void* a = ymalloc(32); memset(a, 'A', 32);
+    void* b = ymalloc(16);
+    // switch order of these frees to test splice
+    yfree(b);
+    yfree(x);
+    DumpFreeList();
+    // F aa FFFFFFFF
+
+    // size_t newSize = 4008;
+    size_t newSize = 56;
+    assert(a == yrealloc(a, newSize));
+    DumpFreeList();
+    // F aaaa FFFFFF
+
+    for (int i = 0; i < 32; ++i)
+        assert(((char*)a)[i] == 'A');
+    assert(*(size_t*)(((char*)a) - 8) == newSize);
+    assert(*(size_t*)(((char*)a) + newSize) == newSize);
+
+    yfree(a);
 }
 
 int main() {
@@ -153,5 +223,8 @@ int main() {
     // MallocFreeTest3();
     // MallocFreeTest4();
     // MallocFreeTest5();
-    ReallocTest1();
+
+    // ReallocTest1();
+    // ReallocTest2();
+    ReallocTest3();
 }
