@@ -39,12 +39,12 @@ static BlockSize* SplitBlock(BlockSize* block, size_t size) {
     BlockNode* prev = oldNode->prev;
     BlockNode* next = oldNode->next;
     size_t oldSize = BLOCKSIZE_BYTES(*block);
-    // assert(size + BLOCK_MIN_SIZE <= oldSize);
-    assert(size + BLOCK_MIN_SIZE <= oldSize + BLOCK_AUXILIARY_SIZE); // realloc
-    size_t newSize = oldSize - size;
+    assert(size + BLOCK_MIN_SIZE <= oldSize);
+    // assert(size + BLOCK_MIN_SIZE <= oldSize + BLOCK_AUXILIARY_SIZE); // realloc
+    size_t newSize = oldSize - size - BLOCK_AUXILIARY_SIZE;
 
     // initialize free block
-    BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + size);
+    BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + size);
     BlockNode* newNode = InitBlock(shrunk, newSize, BLOCK_FREE);
     // BROKEN FOR REALLOC
 
@@ -122,7 +122,7 @@ static BlockSize* BestFit(size_t size) {
         return NULL;
 
     // split the block, rejoin the list, and return the newly created block
-    SplitBlock(bestBlock, size + BLOCK_AUXILIARY_SIZE);
+    SplitBlock(bestBlock, size);
     return bestBlock;
 }
 
@@ -237,7 +237,7 @@ void* ymalloc(size_t size) {
         if (block != coalesced) {
             block = coalesced;
             printf("block = %p\n", (void*)block);
-            SplitBlock(block, size + BLOCK_AUXILIARY_SIZE);
+            SplitBlock(block, size);
         }
     }
     
@@ -284,7 +284,7 @@ void* yrealloc(void* ptr, size_t size) {
     // lower size, shrink block
     if (size < oldSize) {
         printf("SHRINKING BLOCK\n");
-        BlockSize* removed = SplitBlock(block, size + BLOCK_AUXILIARY_SIZE);
+        BlockSize* removed = SplitBlock(block, size);
         InitBlock(block, size, BLOCK_USED);
         PrependFreeBlock(CoalesceBlocks(removed));
         return ptr;
