@@ -197,14 +197,13 @@ void ReallocTest3() {
     void* x = ymalloc(16);
     void* a = ymalloc(32); memset(a, 'A', 32);
     void* b = ymalloc(16);
-    // switch order of these frees to test splice
     yfree(b);
     yfree(x);
     DumpFreeList();
     // F aa FFFFFFFF
 
-    // size_t newSize = 4008;
-    size_t newSize = 56;
+    // size_t newSize = 4016;
+    size_t newSize = 40;
     assert(a == yrealloc(a, newSize));
     DumpFreeList();
     // F aaaa FFFFFF

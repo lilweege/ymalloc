@@ -46,7 +46,6 @@ static BlockSize* SplitBlock(BlockSize* block, size_t size) {
     // initialize free block
     BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + size);
     BlockNode* newNode = InitBlock(shrunk, newSize, BLOCK_FREE);
-    // BROKEN FOR REALLOC
 
     if (BLOCKSIZE_USAGE(*block) == BLOCK_FREE) {
         // reassign pointers to block
@@ -325,17 +324,37 @@ void* yrealloc(void* ptr, size_t size) {
             InitBlock(block, size, BLOCK_USED);
             return ptr;
         }
-        if (size + BLOCK_MIN_SIZE < exactSize) {
+        if (size + BLOCK_MIN_SIZE <= exactSize) {
             // remove from free list (split)
+            size_t splitSize = size - oldSize;
+            assert(size >= oldSize);
             printf("SPLITTING size = %zu\n", size);
             printf("SPLITTING oldSize = %zu\n", oldSize);
-            size_t splitSize = size - oldSize - BLOCK_HEADER_SIZE;
+            printf("SPLITTING belowSize = %zu\n", belowSize);
             printf("SPLITTING splitSize = %zu\n", splitSize);
-            if (size < oldSize + BLOCK_HEADER_SIZE) {
-                assert(0);
-            }
 
-            SplitBlock(belowHeader, splitSize);
+            // similar to SplitBlock, but don't preserve header space
+            BlockNode* belowNode = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
+            BlockNode* prev = belowNode->prev;
+            BlockNode* next = belowNode->next;
+
+            size_t newSize = belowSize - splitSize;
+            printf("SPLITTING newSize = %zu\n", newSize);
+            BlockSize* shrunk = (BlockSize*) (((uint8_t*) belowHeader) + splitSize);
+            belowNode = InitBlock(shrunk, newSize, BLOCK_FREE);
+            
+            // reassign pointers to block
+            if (prev)
+                prev->next = belowNode;
+            else
+                freeListHead = shrunk;
+            if (next)
+                next->prev = belowNode;
+            
+            // assign shrunk block pointers
+            belowNode->prev = prev;
+            belowNode->next = next;
+
             InitBlock(block, size, BLOCK_USED);
             return ptr;
         }
