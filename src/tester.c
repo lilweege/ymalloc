@@ -2,7 +2,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
 
+/*
 void MallocFreeTest1() {
     void* x = ymalloc(20);
     void* y = ymalloc(20);
@@ -226,4 +229,74 @@ int main() {
     // ReallocTest1();
     // ReallocTest2();
     ReallocTest3();
+}
+*/
+
+#define NUM_ITERATIONS   50000
+#define MAX_ALLOCATIONS  500
+#define MIN_ALLOC_SIZE   32
+#define MAX_ALLOC_SIZE   1024
+
+typedef void* (*malloc_like_func)(size_t);
+typedef void (*free_like_func)(void*);
+
+malloc_like_func malloc_fp = NULL;
+free_like_func free_fp = NULL;
+
+
+void* log_alloc(size_t size,  FILE* fp) {
+    void* p = malloc_fp(size);
+    fprintf(fp, "M, %lu, %lu\n", (uintptr_t)p, size);
+    return p;
+}
+
+void log_free(void* p, FILE* fp) {
+    fprintf(fp, "F, %lu\n", (uintptr_t)p);
+    free_fp(p);
+}
+
+typedef struct {
+    void* ptr;
+    char isAllocated;
+} Allocation;
+
+void doAllocations(const char* filename, int indices[NUM_ITERATIONS]) {
+    FILE* fp = fopen(filename, "w");
+    if (fp == NULL) return;
+    Allocation allocations[MAX_ALLOCATIONS];
+    memset(allocations, 0, sizeof(allocations));
+    for (int i = 0; i < NUM_ITERATIONS; ++i) {
+        int idx = indices[i];
+        if (allocations[idx].isAllocated) {
+            allocations[idx].isAllocated = 0;
+            log_free(allocations[idx].ptr, fp);
+        }
+        else {
+            allocations[idx].isAllocated = 1;
+            size_t allocSize = rand() % (MAX_ALLOC_SIZE - MIN_ALLOC_SIZE) + MIN_ALLOC_SIZE;
+            allocations[idx].ptr = log_alloc(allocSize, fp);
+        }
+    }
+
+    for (int i = 0; i < MAX_ALLOCATIONS; ++i) {
+        if (allocations[i].isAllocated) {
+            log_free(allocations[i].ptr, fp);
+        }
+    }
+    fclose(fp);
+}
+
+int main() {
+    // srand(time(NULL));
+    srand(0);
+
+    int indices[NUM_ITERATIONS];
+    for (int i = 0; i < NUM_ITERATIONS; ++i) {
+        indices[i] = rand() % MAX_ALLOCATIONS;
+    }
+
+    malloc_fp = ymalloc; free_fp = yfree;
+    doAllocations("ymalloc.log", indices);
+    // malloc_fp =  malloc; free_fp =  free;
+    // doAllocations("malloc.log", indices);
 }

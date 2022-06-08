@@ -1,6 +1,8 @@
 # ymalloc
 Yet another implementation of malloc and free
 
+mapper.rb inspired by Jacob Sorber on youtube
+
 #### Implementation Details
 
 Some notable details about the internal representation

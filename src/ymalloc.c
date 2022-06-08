@@ -1,10 +1,16 @@
 #include "ymalloc.h"
 #include <string.h>
+#include <stdio.h>
 
 static bool didInitHeap = false;
 static BlockSize* freeListHead = NULL;
 
-#include <stdio.h>
+#ifdef DEBUG
+#define dbgf(fmt, ...) printf(fmt, ##__VA_ARGS__)
+#else
+#define dbgf(...)
+#endif
+
 void DumpFreeList(void) {
     fprintf(stderr, "====== DUMPING HEAP ======\n");
     if (freeListHead) {
@@ -53,7 +59,7 @@ static BlockSize* SplitBlock(BlockSize* block, size_t size) {
             prev->next = newNode;
         else {
             if (freeListHead != block) {
-                printf("FREE HEAD = %p\n", (void*) freeListHead);
+                dbgf("FREE HEAD = %p\n", (void*) freeListHead);
             }
             // assert(freeListHead == block);
             freeListHead = shrunk;
@@ -138,14 +144,14 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
     // merge block with above and below blocks if they are free
     if (((void*) aboveFooter > HeapBegin()) &&
             BLOCKSIZE_USAGE(*aboveFooter) == BLOCK_FREE) {
-        printf("MERGING ABOVE\n");
+        dbgf("MERGING ABOVE\n");
         size_t aboveSize = BLOCKSIZE_BYTES(*aboveFooter);
         BlockNode* aboveNode = (BlockNode*) (((uint8_t*) aboveFooter) - aboveSize);
         BlockNode* prev = aboveNode->prev;
         BlockNode* next = aboveNode->next;
 
         // join blocks
-        printf("MERGING ABOVE %p WITH %p\n", (void*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE), (void*) block);
+        dbgf("MERGING ABOVE %p WITH %p\n", (void*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE), (void*) block);
         block = (BlockSize*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE);
         blockSize += aboveSize + BLOCK_AUXILIARY_SIZE;
 
@@ -164,7 +170,7 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
     }
     if (((void*) belowHeader < HeapEnd()) &&
             BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE) {
-        printf("MERGING BELOW\n");
+        dbgf("MERGING BELOW\n");
         size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
         BlockNode* belowNode = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
         BlockNode* prev = belowNode->prev;
@@ -186,8 +192,8 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
             next->prev = prev;
     }
 
-    printf("BLOCK SIZE = %zu\n", blockSize);
-    printf("block = %p\n", (void*) block);
+    dbgf("BLOCK SIZE = %zu\n", blockSize);
+    dbgf("block = %p\n", (void*) block);
     InitBlock(block, blockSize, BLOCK_FREE);
     return block;
 }
@@ -198,8 +204,8 @@ static void PrependFreeBlock(BlockSize* block) {
     if (freeListHead) {
         node->next = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
         if (node->next) {
-            printf("node->next = %p\n", (void*) node->next);
-            printf("node->next->prev = %p\n", (void*) node->next->prev);
+            dbgf("node->next = %p\n", (void*) node->next);
+            dbgf("node->next->prev = %p\n", (void*) node->next->prev);
             assert(node->next->prev == NULL);
             node->next->prev = node;
         }
@@ -222,20 +228,20 @@ void* ymalloc(size_t size) {
         freeListHead = HeapInit();
     }
     
-    printf("ALIGNED SIZE = %zu\n", size);
+    dbgf("ALIGNED SIZE = %zu\n", size);
     // find an appropriate block
     BlockSize* block = BestFit(size);
     if (!block) {
-        printf("GROWING HEAP!\n");
+        dbgf("GROWING HEAP!\n");
         block = HeapGrow(size);
-        // printf("freeListHead = %p\n", (void*)freeListHead);
+        // dbgf("freeListHead = %p\n", (void*)freeListHead);
         BlockSize* coalesced = CoalesceBlocks(block);
-        // printf("freeListHead = %p\n", (void*)freeListHead);
+        // dbgf("freeListHead = %p\n", (void*)freeListHead);
 
         // if the newly grown block coalesced with above, split it
         if (block != coalesced) {
             block = coalesced;
-            printf("block = %p\n", (void*)block);
+            dbgf("block = %p\n", (void*)block);
             SplitBlock(block, size);
         }
     }
@@ -273,8 +279,8 @@ void* yrealloc(void* ptr, size_t size) {
     BlockSize* block = (BlockSize*) (((uint8_t*) ptr) - BLOCK_HEADER_SIZE);
     size_t oldSize = BLOCKSIZE_BYTES(*block);
     size = PAYLOAD_ALIGN(size);
-    printf("OLD SIZE = %zu\n", oldSize);
-    printf("ALIGNED SIZE = %zu\n", size);
+    dbgf("OLD SIZE = %zu\n", oldSize);
+    dbgf("ALIGNED SIZE = %zu\n", size);
 
     // same size, do nothing
     if (size + BLOCK_MIN_SIZE > oldSize && size <= oldSize)
@@ -282,7 +288,7 @@ void* yrealloc(void* ptr, size_t size) {
     
     // lower size, shrink block
     if (size < oldSize) {
-        printf("SHRINKING BLOCK\n");
+        dbgf("SHRINKING BLOCK\n");
         BlockSize* removed = SplitBlock(block, size);
         InitBlock(block, size, BLOCK_USED);
         PrependFreeBlock(CoalesceBlocks(removed));
@@ -297,15 +303,15 @@ void* yrealloc(void* ptr, size_t size) {
     if (((void*) belowHeader < HeapEnd()) &&
             BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE) {
         size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
-        printf("REALLOC BELOW FREE\n");
+        dbgf("REALLOC BELOW FREE\n");
 
         // is merged size big enough
         size_t exactSize = oldSize + belowSize + BLOCK_AUXILIARY_SIZE;
-        printf("size = %zu\n", size);
-        printf("exactSize = %zu\n", exactSize);
+        dbgf("size = %zu\n", size);
+        dbgf("exactSize = %zu\n", exactSize);
         if (size == exactSize) {
             // remove from free list (no need to split)
-            printf("REALLOC EXACT SIZE!\n");
+            dbgf("REALLOC EXACT SIZE!\n");
             BlockNode* node = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
             BlockNode* prev = node->prev;
             BlockNode* next = node->next;
@@ -328,10 +334,10 @@ void* yrealloc(void* ptr, size_t size) {
             // remove from free list (split)
             size_t splitSize = size - oldSize;
             assert(size >= oldSize);
-            printf("SPLITTING size = %zu\n", size);
-            printf("SPLITTING oldSize = %zu\n", oldSize);
-            printf("SPLITTING belowSize = %zu\n", belowSize);
-            printf("SPLITTING splitSize = %zu\n", splitSize);
+            dbgf("SPLITTING size = %zu\n", size);
+            dbgf("SPLITTING oldSize = %zu\n", oldSize);
+            dbgf("SPLITTING belowSize = %zu\n", belowSize);
+            dbgf("SPLITTING splitSize = %zu\n", splitSize);
 
             // similar to SplitBlock, but don't preserve header space
             BlockNode* belowNode = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
@@ -339,7 +345,7 @@ void* yrealloc(void* ptr, size_t size) {
             BlockNode* next = belowNode->next;
 
             size_t newSize = belowSize - splitSize;
-            printf("SPLITTING newSize = %zu\n", newSize);
+            dbgf("SPLITTING newSize = %zu\n", newSize);
             BlockSize* shrunk = (BlockSize*) (((uint8_t*) belowHeader) + splitSize);
             belowNode = InitBlock(shrunk, newSize, BLOCK_FREE);
             
