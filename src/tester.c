@@ -232,11 +232,12 @@ int main() {
 }
 */
 
-#define SAVE_LOG         0
-#define NUM_ITERATIONS   50000
+#define SAVE_LOG         1
+#define NUM_ITERATIONS   500000
 #define MAX_ALLOCATIONS  500
 #define MIN_ALLOC_SIZE   32
 #define MAX_ALLOC_SIZE   1024
+// #define MAX_ALLOC_SIZE   (1024*100)
 
 typedef void* (*malloc_like_func)(size_t);
 typedef void (*free_like_func)(void*);
@@ -265,7 +266,9 @@ typedef struct {
     char isAllocated;
 } Allocation;
 
-clock_t doRandomAllocations(const char* logfile, int indices[NUM_ITERATIONS]) {
+int indices[NUM_ITERATIONS];
+
+clock_t doRandomAllocations(const char* logfile) {
 #if SAVE_LOG
     FILE* fp = fopen(logfile, "w");
     if (fp == NULL) return 0;
@@ -306,18 +309,16 @@ clock_t doRandomAllocations(const char* logfile, int indices[NUM_ITERATIONS]) {
 int main() {
     srand(time(NULL));
     // srand(0);
-
-    int indices[NUM_ITERATIONS];
     for (int i = 0; i < NUM_ITERATIONS; ++i) {
         indices[i] = rand() % MAX_ALLOCATIONS;
     }
 
     malloc_fp = ymalloc; free_fp = yfree;
-    uint32_t t1 = doRandomAllocations("ymalloc.log", indices);
+    clock_t t1 = doRandomAllocations("ymalloc.log");
     malloc_fp =  malloc; free_fp =  free;
-    uint32_t t2 = doRandomAllocations("malloc.log", indices);
+    clock_t t2 = doRandomAllocations("malloc.log");
 
     printf(
-        "ymalloc: %7dus\n"
-        "malloc:  %7dus\n", t1, t2);
+        "ymalloc: %20ldus\n"
+        "malloc:  %20ldus\n", t1, t2);
 }
