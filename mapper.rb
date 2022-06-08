@@ -1,11 +1,12 @@
 #!/usr/bin/env ruby
 
+require 'ruby2d'
+
 filename = ARGV[0]
 if filename.nil?
     puts "Usage: mapper.rb <logfile>"
     exit(1)
 end
-require 'ruby2d'
 
 RECT_LENGTH = 1024
 RECT_HEIGHT = 8

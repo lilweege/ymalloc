@@ -287,8 +287,8 @@ void doAllocations(const char* filename, int indices[NUM_ITERATIONS]) {
 }
 
 int main() {
-    // srand(time(NULL));
-    srand(0);
+    srand(time(NULL));
+    // srand(0);
 
     int indices[NUM_ITERATIONS];
     for (int i = 0; i < NUM_ITERATIONS; ++i) {
@@ -297,6 +297,6 @@ int main() {
 
     malloc_fp = ymalloc; free_fp = yfree;
     doAllocations("ymalloc.log", indices);
-    // malloc_fp =  malloc; free_fp =  free;
-    // doAllocations("malloc.log", indices);
+    malloc_fp =  malloc; free_fp =  free;
+    doAllocations("malloc.log", indices);
 }

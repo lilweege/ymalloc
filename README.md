@@ -1,7 +1,7 @@
 # ymalloc
 Yet another implementation of malloc and free
 
-mapper.rb inspired by Jacob Sorber on youtube
+`mapper.rb` visualization by [Jacob Sorber on youtube](https://www.youtube.com/watch?v=GIWeQ2I67rk)
 
 #### Implementation Details
 
