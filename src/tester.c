@@ -232,6 +232,7 @@ int main() {
 }
 */
 
+#define SAVE_LOG         0
 #define NUM_ITERATIONS   50000
 #define MAX_ALLOCATIONS  500
 #define MIN_ALLOC_SIZE   32
@@ -246,12 +247,16 @@ free_like_func free_fp = NULL;
 
 void* log_alloc(size_t size,  FILE* fp) {
     void* p = malloc_fp(size);
+#if SAVE_LOG
     fprintf(fp, "M, %lu, %lu\n", (uintptr_t)p, size);
+#endif
     return p;
 }
 
 void log_free(void* p, FILE* fp) {
+#if SAVE_LOG
     fprintf(fp, "F, %lu\n", (uintptr_t)p);
+#endif
     free_fp(p);
 }
 
@@ -260,11 +265,18 @@ typedef struct {
     char isAllocated;
 } Allocation;
 
-void doAllocations(const char* filename, int indices[NUM_ITERATIONS]) {
-    FILE* fp = fopen(filename, "w");
-    if (fp == NULL) return;
+clock_t doRandomAllocations(const char* logfile, int indices[NUM_ITERATIONS]) {
+#if SAVE_LOG
+    FILE* fp = fopen(logfile, "w");
+    if (fp == NULL) return 0;
+#else
+    (void) logfile;
+    FILE* fp = NULL;
+#endif
     Allocation allocations[MAX_ALLOCATIONS];
     memset(allocations, 0, sizeof(allocations));
+
+    clock_t t0 = clock();
     for (int i = 0; i < NUM_ITERATIONS; ++i) {
         int idx = indices[i];
         if (allocations[idx].isAllocated) {
@@ -283,7 +295,12 @@ void doAllocations(const char* filename, int indices[NUM_ITERATIONS]) {
             log_free(allocations[i].ptr, fp);
         }
     }
+    clock_t t1 = clock();
+
+#if SAVE_LOG
     fclose(fp);
+#endif
+    return t1-t0;
 }
 
 int main() {
@@ -296,7 +313,11 @@ int main() {
     }
 
     malloc_fp = ymalloc; free_fp = yfree;
-    doAllocations("ymalloc.log", indices);
+    uint32_t t1 = doRandomAllocations("ymalloc.log", indices);
     malloc_fp =  malloc; free_fp =  free;
-    doAllocations("malloc.log", indices);
+    uint32_t t2 = doRandomAllocations("malloc.log", indices);
+
+    printf(
+        "ymalloc: %7dus\n"
+        "malloc:  %7dus\n", t1, t2);
 }
