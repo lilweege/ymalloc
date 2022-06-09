@@ -7,6 +7,7 @@ if filename.nil?
     puts "Usage: mapper.rb <logfile>"
     exit(1)
 end
+srand(0)
 
 RECT_LENGTH = 1024
 RECT_HEIGHT = 8
