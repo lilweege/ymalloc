@@ -13,18 +13,11 @@
 typedef size_t BlockSize; // lsb represent freed status
 typedef struct BlockNode BlockNode;
 struct BlockNode {
-    BlockNode* prev;
-    BlockNode* next;
-    // these will be repurposed as left and right children in a tree
+    BlockNode* link[2];
+    // serves as either a doubly linked list or a binary tree, depending on implementations
+    // in an rb tree, node color can be stored in a lsb (cast to int and mask)
     // a doubly linked list is not entirely useful
 };
-
-#ifdef DEBUG
-    #define HEAP_INIT_SIZE (4096-BLOCK_AUXILIARY_SIZE)
-#else
-    #define HEAP_INIT_SIZE 1024
-#endif
-#define SBRK_OK(p) ((p) != (void*) -1)
 
 typedef enum {
     BLOCK_USED = 0,
@@ -32,11 +25,19 @@ typedef enum {
 } BlockUsage;
 
 // set
-#define BLOCKSIZE_FREE(x)    ((x) | 1)
-#define BLOCKSIZE_ALLOC(x)   ((x) & ~1)
+#define BLOCKSIZE_ALLOC(x)        ((x) &= ~1)
+#define BLOCKSIZE_FREE(x)         ((x) |= 1)
 // get
-#define BLOCKSIZE_USAGE(x)   ((x) & 1)
-#define BLOCKSIZE_BYTES(x)   ((x) & ~1)
+#define BLOCKSIZE_USAGE(x)        ((x) & 1)
+#define BLOCKSIZE_BYTES(x)        ((x) & ~1)
+
+
+#ifdef DEBUG
+    #define HEAP_INIT_SIZE (4096-BLOCK_AUXILIARY_SIZE)
+#else
+    #define HEAP_INIT_SIZE 1024
+#endif
+#define SBRK_OK(p) ((p) != (void*) -1)
 
 #define BUGGY_MAX_(a, b) ((a) > (b) ? (a) : (b))
 #define HEAP_ALIGNMENT (sizeof(uintptr_t))

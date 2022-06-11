@@ -3,7 +3,9 @@
 #include <stdio.h>
 
 static bool didInitHeap = false;
-static BlockSize* freeListHead = NULL;
+
+#define LIST_IMPL 1
+static BlockSize* freeHead = NULL;
 
 #ifdef DEBUG
 #define dbgf(fmt, ...) printf(fmt, ##__VA_ARGS__)
@@ -11,10 +13,14 @@ static BlockSize* freeListHead = NULL;
 #define dbgf(...)
 #endif
 
+
+#if 1
+void DumpFreeList(void) {}
+#else
 void DumpFreeList(void) {
     fprintf(stderr, "====== DUMPING HEAP ======\n");
-    if (freeListHead) {
-        BlockNode* curr = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
+    if (freeHead) {
+        BlockNode* curr = (BlockNode*) (((uint8_t*) freeHead) + BLOCK_HEADER_SIZE);
         while (curr) {
             BlockSize* header = (BlockSize*) (((uint8_t*) curr) - BLOCK_HEADER_SIZE);
             size_t blockSize = BLOCKSIZE_BYTES(*header);
@@ -23,27 +29,112 @@ void DumpFreeList(void) {
             fprintf(stderr, "%p: { freed=%d, ", (void*)header, freed);
             if (freed == BLOCK_FREE) {
                 fprintf(stderr, "( next = %p, prev = %p ), ",
-                        (void*)(curr->next), (void*)(curr->prev));
+                        (void*)(curr->link[1]), (void*)(curr->link[0]));
             }
             fprintf(stderr, "head=%zu, foot=%zu }\n", blockSize, blockSizeFoot);
-            curr = curr->next;
+            curr = curr->link[1];
         }
     }
     fprintf(stderr, "====== DONE DUMPING ======\n");
 }
+#endif
+
+#if LIST_IMPL
+// inserts a free block to the free list/tree
+static void InsertFreeBlock(BlockSize* block) {
+    // set the block pointers (insert at front of the free list)
+    BlockNode* node = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
+    if (freeHead) {
+        node->link[1] = (BlockNode*) (((uint8_t*) freeHead) + BLOCK_HEADER_SIZE);
+        if (node->link[1]) {
+            dbgf("node->next = %p\n", (void*) node->link[1]);
+            dbgf("node->next->prev = %p\n", (void*) node->link[1]->link[0]);
+            assert(node->link[1]->link[0] == NULL);
+            node->link[1]->link[0] = node;
+        }
+    }
+    else {
+        node->link[1] = NULL;
+    }
+    node->link[0] = NULL;
+    freeHead = block;
+}
+
+// removes a free block from the free list/tree
+static void RemoveFreeBlock(BlockSize* block) {
+    BlockNode* node = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
+
+    BlockNode* prev = node->link[0];
+    BlockNode* next = node->link[1];
+    if (prev)
+        prev->link[1] = next;
+    else {
+        if (next)
+            freeHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
+        else
+            freeHead = NULL;
+    }
+    if (next)
+        next->link[0] = prev;
+}
+
+// returns the smallest free block larger than size, such that either
+// 1. the block has the exact correct size (no split)
+// 2. the block is larger than size + BLOCK_MIN_SIZE (split)
+static BlockSize* BestFreeBlock(size_t size) {
+    if (!freeHead)
+        return NULL;
+
+    size_t sizeNeeded = size + BLOCK_MIN_SIZE;
+    BlockSize* bestBlock = NULL;
+    size_t leastWaste = SIZE_MAX;
+    for (BlockNode* curr = (BlockNode*) (((uint8_t*) freeHead) + BLOCK_HEADER_SIZE);
+        curr != NULL;
+        curr = curr->link[1])
+    {
+        BlockSize* header = (BlockSize*) (((uint8_t*) curr) - BLOCK_HEADER_SIZE);
+        size_t blockSize = BLOCKSIZE_BYTES(*header);
+
+        // exact fit
+        if (blockSize == size) {
+            return header;
+        }
+        
+        // save the best fit that would split a block
+        if (blockSize >= sizeNeeded)
+            if (leastWaste > blockSize - sizeNeeded) {
+                leastWaste = blockSize - sizeNeeded;
+                bestBlock = header;
+            }
+    }
+    return bestBlock;
+}
+#else
+
+static void RemoveFreeBlock(BlockSize* block) {}
+static void InsertFreeBlock(BlockSize* block) {}
+static BlockSize* BestFreeBlock(size_t size) { return NULL; }
+
+#endif
+
+/**/
 
 // splits a free block and repairs the remaining block links
 // returns the newly shrunk free block
 // NOTE: assumes block is big enough to accomodate the smallest new block
 // NOTE: does not initialize the newly split block header/footer
 static BlockSize* SplitBlock(BlockSize* block, size_t size) {
-    // | header (8) | next (8), prev (8)                                            | footer (8) |
-    //   ^ block (in free list) points here
-    // | header (8) | payload (size) | footer (8) | header (8) | next (8), prev (8) | footer (8) |
+    // | header (8) | next (8), prev (8)                                                     | footer (8) |
+    //   ^ block points here
+    // | header (8) | payload (size) | footer (8) | header (8) | next (8), prev (8)   ...    | footer (8) |
     //                                              ^ add this block to free list
+    
+    // block will always be free unless call came from realloc
+    if (BLOCKSIZE_USAGE(*block) == BLOCK_FREE) {
+        RemoveFreeBlock(block);
+    }
+
     BlockNode* oldNode = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
-    BlockNode* prev = oldNode->prev;
-    BlockNode* next = oldNode->next;
     size_t oldSize = BLOCKSIZE_BYTES(*block);
     assert(size + BLOCK_MIN_SIZE <= oldSize);
     // assert(size + BLOCK_MIN_SIZE <= oldSize + BLOCK_AUXILIARY_SIZE); // realloc
@@ -51,82 +142,35 @@ static BlockSize* SplitBlock(BlockSize* block, size_t size) {
 
     // initialize free block
     BlockSize* shrunk = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + size);
-    BlockNode* newNode = InitBlock(shrunk, newSize, BLOCK_FREE);
+    InitBlock(shrunk, newSize, BLOCK_FREE);
+    assert(oldNode == InitBlock(block, size, BLOCKSIZE_USAGE(*block)));
 
     if (BLOCKSIZE_USAGE(*block) == BLOCK_FREE) {
-        // reassign pointers to block
-        if (prev)
-            prev->next = newNode;
-        else {
-            if (freeListHead != block) {
-                dbgf("FREE HEAD = %p\n", (void*) freeListHead);
-            }
-            // assert(freeListHead == block);
-            freeListHead = shrunk;
-        }
-        if (next)
-            next->prev = newNode;
+        InsertFreeBlock(shrunk);
     }
-    
-    // assign shrunk block pointers
-    newNode->prev = prev;
-    newNode->next = next;
     return shrunk;
 }
+
 
 // finds the "best fit" for a block with payload size "size"
 // without foresight, minimize fragmentation by choosing the closest fit
 static BlockSize* BestFit(size_t size) {
-    if (!freeListHead)
-        return NULL;
-    
-    BlockSize* bestBlock = NULL;
-    size_t leastWaste = SIZE_MAX;
-
-    BlockNode* curr = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
-    while (curr) {
-        BlockSize* header = (BlockSize*) (((uint8_t*) curr) - BLOCK_HEADER_SIZE);
-        size_t blockSize = BLOCKSIZE_BYTES(*header);
-
-        // can use entire block if possible
-        if (blockSize == size) {
-            // no need to split
-            // remove entire block from free list and return it
-            BlockNode* node = (BlockNode*) (((uint8_t*) header) + BLOCK_HEADER_SIZE);
-            BlockNode* prev = node->prev;
-            BlockNode* next = node->next;
-            if (prev)
-                prev->next = next;
-            else {
-                assert(freeListHead == header);
-                if (next)
-                    freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
-                else
-                    freeListHead = NULL;
-            }
-            if (next)
-                next->prev = prev;
-
-            return header;
-        }
-        
-        // save the best fit that would split a block
-        size_t sizeNeeded = size + BLOCK_MIN_SIZE;
-        if (blockSize >= sizeNeeded)
-            if (leastWaste > blockSize - sizeNeeded) {
-                leastWaste = blockSize - sizeNeeded;
-                bestBlock = header;
-            }
-        
-        // next blocksize
-        curr = curr->next;
-    }
+    BlockSize* bestBlock = BestFreeBlock(size);
 
     // couldn't find a block (will have to grow heap)
     if (!bestBlock)
         return NULL;
 
+    // exact match, no need to split
+    size_t blockSize = BLOCKSIZE_BYTES(*bestBlock);
+    if (blockSize == size) {
+        // remove entire block from free list and return it
+        RemoveFreeBlock(bestBlock);
+        return bestBlock;
+    }
+
     // split the block, rejoin the list, and return the newly created block
+    // assertion will fail if block is not large enough to split by size
     SplitBlock(bestBlock, size);
     return bestBlock;
 }
@@ -142,13 +186,12 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
     BlockSize* belowHeader = (BlockSize*) (((uint8_t*) block) + BLOCK_AUXILIARY_SIZE + blockSize);
 
     // merge block with above and below blocks if they are free
-    if (((void*) aboveFooter > HeapBegin()) &&
-            BLOCKSIZE_USAGE(*aboveFooter) == BLOCK_FREE) {
+    if ((void*) aboveFooter > HeapBegin() &&
+        BLOCKSIZE_USAGE(*aboveFooter) == BLOCK_FREE)
+    {
         dbgf("MERGING ABOVE\n");
         size_t aboveSize = BLOCKSIZE_BYTES(*aboveFooter);
         BlockNode* aboveNode = (BlockNode*) (((uint8_t*) aboveFooter) - aboveSize);
-        BlockNode* prev = aboveNode->prev;
-        BlockNode* next = aboveNode->next;
 
         // join blocks
         dbgf("MERGING ABOVE %p WITH %p\n", (void*) (((uint8_t*) aboveNode) - BLOCK_HEADER_SIZE), (void*) block);
@@ -156,40 +199,18 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
         blockSize += aboveSize + BLOCK_AUXILIARY_SIZE;
 
         // remove aboveNode from list
-        if (prev)
-            prev->next = next;
-        else {
-            assert(freeListHead == block);
-            if (next)
-                freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
-            else
-                freeListHead = NULL;
-        }
-        if (next)
-            next->prev = prev;
+        RemoveFreeBlock(block);
     }
-    if (((void*) belowHeader < HeapEnd()) &&
-            BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE) {
+    if ((void*) belowHeader < HeapEnd() &&
+        BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE)
+    {
         dbgf("MERGING BELOW\n");
         size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
-        BlockNode* belowNode = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
-        BlockNode* prev = belowNode->prev;
-        BlockNode* next = belowNode->next;
 
         // join blocks
         blockSize += belowSize + BLOCK_AUXILIARY_SIZE;
 
-        if (prev)
-            prev->next = next;
-        else {
-            assert(freeListHead == (BlockSize*) (((uint8_t*) belowNode) - BLOCK_HEADER_SIZE));
-            if (next)
-                freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
-            else
-                freeListHead = NULL;
-        }
-        if (next)
-            next->prev = prev;
+        RemoveFreeBlock(belowHeader);
     }
 
     dbgf("BLOCK SIZE = %zu\n", blockSize);
@@ -198,24 +219,6 @@ static BlockSize* CoalesceBlocks(BlockSize* block) {
     return block;
 }
 
-static void PrependFreeBlock(BlockSize* block) {
-    // set the block pointers (insert at front of the free list)
-    BlockNode* node = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
-    if (freeListHead) {
-        node->next = (BlockNode*) (((uint8_t*) freeListHead) + BLOCK_HEADER_SIZE);
-        if (node->next) {
-            dbgf("node->next = %p\n", (void*) node->next);
-            dbgf("node->next->prev = %p\n", (void*) node->next->prev);
-            assert(node->next->prev == NULL);
-            node->next->prev = node;
-        }
-    }
-    else {
-        node->next = NULL;
-    }
-    node->prev = NULL;
-    freeListHead = block;
-}
 
 void* ymalloc(size_t size) {
     // nothing to allocate
@@ -225,7 +228,7 @@ void* ymalloc(size_t size) {
     
     if (!didInitHeap) {
         didInitHeap = true;
-        freeListHead = HeapInit();
+        InsertFreeBlock(HeapInit());
     }
     
     dbgf("ALIGNED SIZE = %zu\n", size);
@@ -234,9 +237,9 @@ void* ymalloc(size_t size) {
     if (!block) {
         dbgf("GROWING HEAP!\n");
         block = HeapGrow(size);
-        // dbgf("freeListHead = %p\n", (void*)freeListHead);
+        // dbgf("freeHead = %p\n", (void*)freeHead);
         BlockSize* coalesced = CoalesceBlocks(block);
-        // dbgf("freeListHead = %p\n", (void*)freeListHead);
+        // dbgf("freeHead = %p\n", (void*)freeHead);
 
         // if the newly grown block coalesced with above, split it
         if (block != coalesced) {
@@ -258,7 +261,7 @@ void yfree(void* ptr) {
 
     // coalesce adjacent blocks
     BlockSize* block = (BlockSize*) (((uint8_t*) ptr) - BLOCK_HEADER_SIZE);
-    PrependFreeBlock(CoalesceBlocks(block));
+    InsertFreeBlock(CoalesceBlocks(block));
 }
 
 void* ycalloc(size_t nmemb, size_t size) {
@@ -291,7 +294,7 @@ void* yrealloc(void* ptr, size_t size) {
         dbgf("SHRINKING BLOCK\n");
         BlockSize* removed = SplitBlock(block, size);
         InitBlock(block, size, BLOCK_USED);
-        PrependFreeBlock(CoalesceBlocks(removed));
+        InsertFreeBlock(CoalesceBlocks(removed));
         return ptr;
     }
     
@@ -301,7 +304,8 @@ void* yrealloc(void* ptr, size_t size) {
     // check if it is possible to grow without reallocating
     // check if block immediately below is free and big enough
     if (((void*) belowHeader < HeapEnd()) &&
-            BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE) {
+        BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE)
+    {
         size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
         dbgf("REALLOC BELOW FREE\n");
 
@@ -312,20 +316,7 @@ void* yrealloc(void* ptr, size_t size) {
         if (size == exactSize) {
             // remove from free list (no need to split)
             dbgf("REALLOC EXACT SIZE!\n");
-            BlockNode* node = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
-            BlockNode* prev = node->prev;
-            BlockNode* next = node->next;
-            if (prev)
-                prev->next = next;
-            else {
-                // assert(0);
-                if (next)
-                    freeListHead = (BlockSize*) (((uint8_t*) next) - BLOCK_HEADER_SIZE);
-                else
-                    freeListHead = NULL;
-            }
-            if (next)
-                next->prev = prev;
+            RemoveFreeBlock(belowHeader);
 
             InitBlock(block, size, BLOCK_USED);
             return ptr;
@@ -340,28 +331,13 @@ void* yrealloc(void* ptr, size_t size) {
             dbgf("SPLITTING splitSize = %zu\n", splitSize);
 
             // similar to SplitBlock, but don't preserve header space
-            BlockNode* belowNode = (BlockNode*) (((uint8_t*) belowHeader) + BLOCK_HEADER_SIZE);
-            BlockNode* prev = belowNode->prev;
-            BlockNode* next = belowNode->next;
-
             size_t newSize = belowSize - splitSize;
             dbgf("SPLITTING newSize = %zu\n", newSize);
             BlockSize* shrunk = (BlockSize*) (((uint8_t*) belowHeader) + splitSize);
-            belowNode = InitBlock(shrunk, newSize, BLOCK_FREE);
-            
-            // reassign pointers to block
-            if (prev)
-                prev->next = belowNode;
-            else
-                freeListHead = shrunk;
-            if (next)
-                next->prev = belowNode;
-            
-            // assign shrunk block pointers
-            belowNode->prev = prev;
-            belowNode->next = next;
-
+            InitBlock(shrunk, newSize, BLOCK_FREE);
             InitBlock(block, size, BLOCK_USED);
+            
+            InsertFreeBlock(shrunk);
             return ptr;
         }
     }

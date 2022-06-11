@@ -9,7 +9,13 @@ void* HeapEnd(void) { return ((uint8_t*) heapBase) + heapSize; }
 BlockNode* InitBlock(void* ptr, size_t size, BlockUsage usage) {
     BlockSize* header = (BlockSize*) (((uint8_t*) ptr));
     BlockSize* footer = (BlockSize*) (((uint8_t*) ptr) + BLOCK_HEADER_SIZE + size);
-    BlockSize blockSize = usage == BLOCK_USED ? BLOCKSIZE_ALLOC(size) : BLOCKSIZE_FREE(size);
+    BlockSize blockSize = size;
+    if (usage == BLOCK_USED) {
+        BLOCKSIZE_ALLOC(blockSize);
+    }
+    else {
+        BLOCKSIZE_FREE(blockSize);
+    }
     *header = blockSize;
     *footer = blockSize;
     BlockNode* payload = (BlockNode*) (((uint8_t*) ptr) + BLOCK_HEADER_SIZE);
@@ -46,7 +52,6 @@ BlockSize* HeapGrow(size_t size) {
 
     // create a free block in the new space
     BlockNode* node = InitBlock(blockPtr, payloadSize, BLOCK_FREE);
-    node->next = NULL;
-    node->prev = NULL;
+    node->link[0] = node->link[1] = NULL;
     return blockPtr;
 }
