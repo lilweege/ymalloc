@@ -4,11 +4,7 @@
 #ifndef HEAP_H
 #define HEAP_H
 
-#include <assert.h>
 #include <stddef.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <unistd.h>
 
 typedef size_t BlockSize; // lsb represent freed status
 typedef struct BlockNode BlockNode;
@@ -35,7 +31,7 @@ typedef enum {
 #ifdef DEBUG
     #define HEAP_INIT_SIZE (4096-BLOCK_AUXILIARY_SIZE)
 #else
-    #define HEAP_INIT_SIZE 1024
+    #define HEAP_INIT_SIZE 65536
 #endif
 #define SBRK_OK(p) ((p) != (void*) -1)
 

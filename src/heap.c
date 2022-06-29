@@ -1,4 +1,7 @@
 #include "heap.h"
+#include <unistd.h>
+#include <stdint.h>
+#include <string.h>
 
 static void* heapBase = NULL;
 static size_t heapSize = 0;
@@ -52,6 +55,6 @@ BlockSize* HeapGrow(size_t size) {
 
     // create a free block in the new space
     BlockNode* node = InitBlock(blockPtr, payloadSize, BLOCK_FREE);
-    node->link[0] = node->link[1] = NULL;
+    memset(node, 0, sizeof(BlockNode));
     return blockPtr;
 }

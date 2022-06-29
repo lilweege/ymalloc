@@ -5,8 +5,6 @@
 
 #include "heap.h"
 
-void DumpFreeList(void); // TODO: don't expose this
-
 void* ymalloc(size_t size);
 void yfree(void* ptr);
 void* ycalloc(size_t nmemb, size_t size);
