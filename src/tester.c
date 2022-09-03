@@ -6,6 +6,7 @@
 #include <time.h>
 #include <assert.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 
 
@@ -43,7 +44,8 @@ void log_free(void* p, FILE* f) {
 typedef struct {
     void* ptr;
     size_t size;
-    char isAllocated;
+    uint8_t pattern;
+    bool isAllocated;
 } Allocation;
 
 int indices[NUM_ITERATIONS];
@@ -59,27 +61,32 @@ clock_t doRandomAllocations(const char* logfile) {
     Allocation allocations[MAX_ALLOCATIONS];
     memset(allocations, 0, sizeof(allocations));
 
+    uint8_t currentPattern = 0;
     clock_t t0 = clock();
     for (int i = 0; i < NUM_ITERATIONS; ++i) {
         int idx = indices[i];
         if (allocations[idx].isAllocated) {
 #ifdef DEBUG
             for (size_t i = 0; i < allocations[idx].size; ++i) {
-                if (((uint8_t*)(allocations[idx].ptr))[i] != 'A') {
-                    assert(0 && "CORRUPTED MEMORY");
+                uint8_t* addr = &(((uint8_t*)(allocations[idx].ptr))[i]);
+                if (*addr != allocations[idx].pattern) {
+                    fprintf(stderr, "Error: Corrupted memory at %p, expected %#04X, got %#04X\n",
+                        addr, *addr, allocations[idx].pattern);
+                    exit(1);
                 }
             }
 #endif
-            allocations[idx].isAllocated = 0;
+            allocations[idx].isAllocated = false;
             log_free(allocations[idx].ptr, fp);
         }
         else {
-            allocations[idx].isAllocated = 1;
+            allocations[idx].pattern = currentPattern++;
+            allocations[idx].isAllocated = true;
             size_t allocSize = rand() % (MAX_ALLOC_SIZE - MIN_ALLOC_SIZE) + MIN_ALLOC_SIZE;
             allocations[idx].size = allocSize;
             allocations[idx].ptr = log_alloc(allocSize, fp);
 #ifdef DEBUG
-            memset(allocations[idx].ptr, 'A', allocSize);
+            memset(allocations[idx].ptr, allocations[idx].pattern, allocSize);
 #endif
         }
     }
