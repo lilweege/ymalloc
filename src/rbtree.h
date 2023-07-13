@@ -18,8 +18,6 @@ typedef enum {
 #define RB_NODE_SET_COLOR_RED(x) (((x)->link[0]) = (BlockNode*)(((uintptr_t)(x)->link[0] | 1)))
 #define RB_NODE_SET_COLOR_BLACK(x) (((x)->link[0]) = (BlockNode*)(((uintptr_t)(x)->link[0] & ~1)))
 #define RB_NODE_FLIP_COLOR(x) (((x)->link[0]) = (BlockNode*)(((uintptr_t)(x)->link[0] ^ 1)))
-#define RB_NODE_NEXT(x) ((x)->link[2])
-#define RB_NODE_SET_NEXT(x, n) ((x)->link[2] = n)
 #define RB_NODE_KEY(x) (RB_Key)(BLOCKSIZE_BYTES(*(BlockSize*)(((uint8_t*)(x)) - BLOCK_HEADER_SIZE)) >> 1)
 
 typedef int64_t RB_Key;
