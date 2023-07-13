@@ -17,4 +17,3 @@ Some notable details about the internal representation
 
 - Use `mmap` instead of `sbrk`
 - Slightly more space can be used to store a checksum of block sizes and pointers in order to detect block corruption
-- Switch to using an RB tree or similar structure, rather than doubly linked list, for more efficient block fitting
