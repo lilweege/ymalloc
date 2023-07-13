@@ -1,6 +1,9 @@
 # ymalloc
 Yet another implementation of malloc and free
 
+![visualization](https://github.com/lilweege/ymalloc/assets/59585724/7fae4831-9d5c-4ce3-b385-08f8a2369d62)
+*Heap visualization of glibc malloc (left) vs ymalloc (right) after many iterations*
+
 `mapper.rb` visualization by [Jacob Sorber on youtube](https://www.youtube.com/watch?v=GIWeQ2I67rk)
 
 #### Implementation Details
