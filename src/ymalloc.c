@@ -21,10 +21,12 @@
 
 
 static bool didInitHeap = false;
-#define LL_IMPL 1
+#define LL_IMPL 0
 
 
 #if LL_IMPL
+
+#define LL_FIRST_FIT 0
 
 static BlockNode* freeHead = NULL;
 
@@ -120,20 +122,57 @@ static BlockSize* BestFreeBlock(size_t size) {
 
         // save the best fit that would split a block
         if (blockSize >= sizeNeeded) {
-            return header; // first-fit faster than best-fit
+#if LL_FIRST_FIT
+            return header;
+#else
             if (leastWaste > blockSize - sizeNeeded) {
                 leastWaste = blockSize - sizeNeeded;
                 bestBlock = header;
             }
+#endif
         }
     }
     return bestBlock;
 }
+
 #else
 
-static void RemoveFreeBlock(BlockSize* block) {}
-static void InsertFreeBlock(BlockSize* block) {}
-static BlockSize* BestFreeBlock(size_t size) { return NULL; }
+#include "rbtree.h"
+
+static BlockNode* freeRoot = NULL;
+
+static void RemoveFreeBlock(BlockSize* block) {
+    RB_Delete(&freeRoot, (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE));
+#ifdef DEBUG
+    RB_AssertInvariants(freeRoot);
+#endif
+}
+
+static void InsertFreeBlock(BlockSize* block) {
+    assert(block != NULL);
+    assert(BLOCKSIZE_USAGE(*block) == BLOCK_FREE);
+    BlockNode* node = (BlockNode*) (((uint8_t*) block) + BLOCK_HEADER_SIZE);
+    RB_NODE_SET_LEFT(node, NULL);
+    RB_NODE_SET_RIGHT(node, NULL);
+    RB_Put(&freeRoot, node);
+#ifdef DEBUG
+    RB_AssertInvariants(freeRoot);
+#endif
+}
+
+static BlockSize* BestFreeBlock(size_t size) {
+    size_t sizeNeeded = size + BLOCK_MIN_SIZE;
+    BlockNode* bestNode = RB_Ceiling(freeRoot, sizeNeeded);
+    if (bestNode == NULL)
+        return NULL;
+    BlockSize* best = (BlockSize*) (((uint8_t*) bestNode) - BLOCK_HEADER_SIZE);
+    assert(*best >= sizeNeeded);
+#ifdef DEBUG
+    RB_AssertInvariants(freeRoot);
+#endif
+    return best;
+}
+
 
 #endif
 
