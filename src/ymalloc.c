@@ -344,7 +344,84 @@ void* ycalloc(size_t nmemb, size_t size) {
 }
 
 void* yrealloc(void* ptr, size_t size) {
-    // TODO: implement in terms of ymalloc and yfree
-    assert(0 && "Unimplemented");
-    return NULL;
+    // realloc nothing, simply malloc
+    if (ptr == NULL)
+        return ymalloc(size);
+
+    // get the old and new sizes
+    BlockSize* block = (BlockSize*) (((uint8_t*) ptr) - BLOCK_HEADER_SIZE);
+    size_t oldSize = BLOCKSIZE_BYTES(*block);
+    size = PAYLOAD_ALIGN(size);
+    dbgf("OLD SIZE = %zu\n", oldSize);
+    dbgf("ALIGNED SIZE = %zu\n", size);
+
+    // same size, do nothing
+    if (size + BLOCK_MIN_SIZE > oldSize && size <= oldSize)
+        return ptr;
+
+    // lower size, shrink block
+    if (size < oldSize) {
+        dbgf("SHRINKING BLOCK\n");
+        BlockSize* removed = SplitBlock(block, size);
+        InitBlock(block, size, BLOCK_USED);
+        InsertFreeBlock(CoalesceBlocks(removed));
+        return ptr;
+    }
+
+    // below here size > oldSize
+    BlockSize* belowHeader = (BlockSize*) (((uint8_t*) ptr) + oldSize + BLOCK_HEADER_SIZE);
+
+    // check if it is possible to grow without reallocating
+    // check if block immediately below is free and big enough
+    if ((void*) belowHeader < HeapEnd() &&
+        BLOCKSIZE_USAGE(*belowHeader) == BLOCK_FREE)
+    {
+        size_t belowSize = BLOCKSIZE_BYTES(*belowHeader);
+        dbgf("REALLOC BELOW FREE\n");
+
+        // is merged size big enough
+        size_t exactSize = oldSize + belowSize + BLOCK_AUXILIARY_SIZE;
+        dbgf("size = %zu\n", size);
+        dbgf("exactSize = %zu\n", exactSize);
+        if (size == exactSize) {
+            // remove from free list (no need to split)
+            dbgf("REALLOC EXACT SIZE!\n");
+            RemoveFreeBlock(belowHeader);
+
+            InitBlock(block, size, BLOCK_USED);
+            return ptr;
+        }
+
+        if (size + BLOCK_MIN_SIZE <= exactSize) {
+            // remove from free list (split)
+            size_t splitSize = size - oldSize;
+            assert(size >= oldSize);
+            dbgf("SPLITTING size = %zu\n", size);
+            dbgf("SPLITTING oldSize = %zu\n", oldSize);
+            dbgf("SPLITTING belowSize = %zu\n", belowSize);
+            dbgf("SPLITTING splitSize = %zu\n", splitSize);
+
+            RemoveFreeBlock(belowHeader);
+
+            // similar to SplitBlock, but don't preserve header space
+            size_t newSize = belowSize - splitSize;
+            dbgf("SPLITTING newSize = %zu\n", newSize);
+            BlockSize* shrunk = (BlockSize*) (((uint8_t*) belowHeader) + splitSize);
+            InitBlock(shrunk, newSize, BLOCK_FREE);
+            InitBlock(block, size, BLOCK_USED);
+
+            InsertFreeBlock(shrunk);
+            return ptr;
+        }
+        // below block too small
+    }
+
+    // TODO: if the above block is empty, check if
+    // aboveSize + oldSize + belowSize <= newSize, then coalesce and memmove
+
+    // if the old block cannot be reused in any way, need to reallocate and move
+    void* new_ptr = ymalloc(size);
+    memcpy(new_ptr, ptr, oldSize);
+    yfree(ptr);
+    return new_ptr;
 }
